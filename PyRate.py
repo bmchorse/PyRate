@@ -4091,7 +4091,10 @@ else:
 	res=start_MCMC(0)
 print "\nfinished at:", time.ctime(), "\nelapsed time:", round(time.time()-t1,2), "\n"
 logfile.close()
-marginal_file.close()
+try:
+	marginal_file.close()
+except:
+	pass
 
 #cmd="cd %s && cd .. && tar -czf %s.tar.gz %s;" % (path_dir, folder_name, folder_name)
 #print cmd
