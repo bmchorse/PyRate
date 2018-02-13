@@ -2,7 +2,8 @@
 # Created by Daniele Silvestro on 02/03/2012 => pyrate.help@gmail.com 
 import argparse, os,sys, platform, time, csv, glob
 import random as rand
-import warnings
+import warnings, imp
+
 version= "PyRate"
 build  = "v2.0 - 20170811"
 if platform.system() == "Darwin": sys.stdout.write("\x1b]2;%s\x07" % version)
@@ -92,11 +93,26 @@ original_stderr = sys.stderr
 NO_WARN = original_stderr #open('pyrate_warnings.log', 'w')
 small_number= 1e-50
 
+def get_self_path():
+	self_path = -1
+	path_list = [os.path.dirname(sys.argv[0]) , os.getcwd()]
+	for path in path_list:
+		try:
+			self_path=path
+			lib_updates_priors = imp.load_source("lib_updates_priors", "%s/pyrate_lib/lib_updates_priors.py" % (self_path))
+			break
+		except:
+			self_path = -1
+	if self_path== -1:
+		print os.getcwd(), os.path.dirname(sys.argv[0])	
+		sys.exit("pyrate_lib not found.\n")
+	return self_path
+
 
 # Search for the module
 hasFoundPyRateC = 0
 try:
-	self_path= os.path.dirname(sys.argv[0])
+	self_path = get_self_path()
 	if platform.system()=="Darwin": os_spec_lib="macOS"
 	elif platform.system() == "Windows" or platform.system() == "Microsoft": os_spec_lib="Windows"
 	else: os_spec_lib = "Other"
@@ -741,11 +757,43 @@ def comb_log_files(path_to_files,burnin=0,tag="",resample=0,col_tag=[]):
 	print "found", len(files), "log files...\n"
 	if len(files)==0: quit()
 	j=0
+	
+	
 	burnin = int(burnin)
+	
+	if "_sp_rates.log" in os.path.basename(files[0]) or "_ex_rates.log" in os.path.basename(files[0]):
+		for f in files:
+			f_temp = open(f,'r')
+			x_temp = [line for line in f_temp.readlines()]
+			x_temp = x_temp[max(1,int(burnin)):]
+			x_temp =array(x_temp)
+			if resample>0:
+				r_ind= sort(np.random.randint(0,len(x_temp),resample))
+				x_temp = x_temp[r_ind]
+			if j==0: 
+				comb = x_temp
+			else:
+				comb = np.concatenate((comb,x_temp))
+			j+=1
+			
+		
+		outfile = "%s/combined_%s%s.log" % (infile,len(files),tag)	
+		with open(outfile, 'w') as f:
+			#
+			for i in comb: f.write(i)
+		     #fmt_list=['%i']
+		     #if platform.system() == "Windows" or platform.system() == "Microsoft":
+		     #	np.savetxt(f, comb, delimiter="\t",fmt=fmt_list,newline="\r") #)
+		     #else:
+		     #	np.savetxt(f, comb, delimiter="\t",fmt=fmt_list,newline="\n") #)
+	           #
+		sys.exit("done")	
+	
+	
 	for f in files:
 		try:
 			file_name =  os.path.splitext(os.path.basename(f))[0]
-			print file_name,
+			print file_name,			
 			t_file=loadtxt(f, skiprows=max(1,int(burnin)))
 			shape_f=shape(t_file)
 			print shape_f
@@ -777,7 +825,7 @@ def comb_log_files(path_to_files,burnin=0,tag="",resample=0,col_tag=[]):
 		except: print "ERROR in",f	
 		if len(col_tag) == 0:
 			if j==0: 
-				head = next(open(f))#.split()
+				tbl_header = next(open(f))#.split()
 				comb = t_file
 			else:
 				comb = np.concatenate((comb,t_file),axis=0)
@@ -826,7 +874,7 @@ def comb_log_files(path_to_files,burnin=0,tag="",resample=0,col_tag=[]):
 
 	print np.shape(comb), len(fmt_list)
 	
-	outfile = "%s/combined_%s%s_files.log" % (infile,len(files),tag)
+	outfile = "%s/combined_%s%s.log" % (infile,len(files),tag)
 	
 	with open(outfile, 'w') as f:
 		f.write(tbl_header)
@@ -1131,12 +1179,17 @@ def p1(t,l,m,rho):
 	return  rho*(l-m)**2 * exp(-(l-m)*t)/(rho*l + (l*(1-rho) -m)*exp(-(l-m)*t))**2
 
 def treeBDlikelihood(x,l,m,rho,root=1,survival=1):
-	lik = (root + 1) * log(p1(x[0], l, m, rho))
-	for i in range(1, len(x)) :
-	    lik = lik + log(l * p1(x[i], l, m, rho))
-	if survival == 1:
-		lik = lik - (root + 1) * log(1 - p0(x[0], l, m, rho))
-	return lik
+	#_ lik = (root + 1) * log(p1(x[0], l, m, rho))
+	#_ for i in range(1, len(x)) :
+	#_     lik = lik + log(l * p1(x[i], l, m, rho))
+	#_ if survival == 1:
+	#_ 	lik = lik - (root + 1) * log(1 - p0(x[0], l, m, rho))
+	#_ return lik
+	lik1= (root + 1) * log(p1(x[0], l, m, rho)) 
+	lik2= sum(log(l * p1(x[1:], l, m, rho)))
+	lik3= - (root + 1) * log(1 - p0(x[0], l, m, rho))
+	return lik1+lik2+lik3  
+	
 #----
 
 def BD_lik_discrete_trait(arg):
@@ -2837,7 +2890,6 @@ def marginal_likelihood(marginal_file, l, t):
 	marginal_file.close()
 
 ########################## PARSE ARGUMENTS #######################################
-self_path=os.getcwd()
 p = argparse.ArgumentParser() #description='<input file>') 
 
 p.add_argument('-v',         action='version', version=version_details)
@@ -3065,7 +3117,7 @@ else:
 
 if args.ginput != "" or args.check_names != "" or args.reduceLog != "":
 	try:
-	 	self_path= os.path.dirname(sys.argv[0])
+	 	self_path = get_self_path()
 	 	pyrate_lib_path = "pyrate_lib"
 	 	sys.path.append(os.path.join(self_path,pyrate_lib_path)) 	
 		import lib_DD_likelihood
@@ -3203,9 +3255,8 @@ list_files_BF=sort(args.BF)
 file_stem=args.tag
 root_plot=args.root_plot
 if path_dir_log_files != "":
+	self_path = get_self_path()
 	if plot_type>=3:
-		self_path= os.path.dirname(sys.argv[0])
-		import imp
 		lib_DD_likelihood = imp.load_source("lib_DD_likelihood", "%s/pyrate_lib/lib_DD_likelihood.py" % (self_path))
 		lib_utilities = imp.load_source("lib_utilities", "%s/pyrate_lib/lib_utilities.py" % (self_path))
 		rtt_plot_bds = imp.load_source("rtt_plot_bds", "%s/pyrate_lib/rtt_plot_bds.py" % (self_path))
@@ -3288,7 +3339,7 @@ if use_se_tbl==0:
 
 	if args.wd=="": 
 		output_wd = os.path.dirname(args.input_data[0])
-		if output_wd=="": output_wd= self_path
+		if output_wd=="": output_wd= get_self_path()
 	else: output_wd=args.wd
 
 	#print "\n",input_file, args.input_data, "\n"
@@ -3388,7 +3439,7 @@ else:
 	fix_SE= 1
 	fixed_ts, fixed_te=FA, LO	
 	output_wd = os.path.dirname(se_tbl_file)
-	if output_wd=="": output_wd= self_path
+	if output_wd=="": output_wd= get_self_path()
 	out_name="%s_%s_%s"  % (os.path.splitext(os.path.basename(se_tbl_file))[0],j,args.out)
 	if focus_clade>=0: out_name+= "_c%s" % (focus_clade)
 
@@ -3748,6 +3799,9 @@ if use_poiD == 1:
 		print "PoiD not available with SE estimation. Using BD instead."
 		BPD_partial_lik = BD_partial_lik
 		PoiD_const = 0
+	if hasFoundPyRateC:
+		print "PoiD not available using FastPyRateC library. Using Python version instead."
+		hasFoundPyRateC = 0
 
 
 ##### SETFREQ OF PROPOSING B/D shifts (RJMCMC)
@@ -3829,7 +3883,7 @@ if args.data_info == 1:
 	
 # RUN PP-MODEL TEST
 if args.PPmodeltest== 1:
- 	self_path= os.path.dirname(sys.argv[0])
+ 	self_path = get_self_path()
  	pyrate_lib_path = "pyrate_lib"
  	sys.path.append(os.path.join(self_path,pyrate_lib_path)) 	
 	import PPmodeltest
@@ -4091,10 +4145,8 @@ else:
 	res=start_MCMC(0)
 print "\nfinished at:", time.ctime(), "\nelapsed time:", round(time.time()-t1,2), "\n"
 logfile.close()
-try:
+if log_marginal_rates_to_file==1:
 	marginal_file.close()
-except:
-	pass
 
 #cmd="cd %s && cd .. && tar -czf %s.tar.gz %s;" % (path_dir, folder_name, folder_name)
 #print cmd
