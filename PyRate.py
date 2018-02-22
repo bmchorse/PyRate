@@ -15,11 +15,6 @@ Occurrence Data. Systematic Biology, 63, 349-367.
 Silvestro, D., Salamin, N., Schnitzler, J. (2014)
 PyRate: A new program to estimate speciation and extinction rates from
 incomplete fossil record. Methods in Ecology and Evolution, 5, 1126-1131.
-
-Silvestro D., Cascales-Minana B., Bacon C. D., Antonelli A. (2015)
-Revisiting the origin and diversification of vascular plants through a
-comprehensive Bayesian analysis of the fossil record. New Phytologist,
-doi:10.1111/nph.13247. 
 """
 print("""
                   %s - %s
@@ -727,7 +722,7 @@ def plot_tste_stats(tste_file, EXT_RATE, step_size,no_sim_ex_time,burnin,rescale
 	library(scales)
 	plot(time,tbl$diversity, type="l",lwd = 2, ylab= "Number of lineages", xlab="Time (Ma)", main="Diversity through time", ylim=c(0,max(tbl$M_div,na.rm =T)+1),xlim=c(min(time),0))
 	polygon(c(time, rev(time)), c(tbl$M_div, rev(tbl$m_div)), col = alpha("#504A4B",0.5), border = NA)
-	plot(time,tbl$median_genus_age, type="l",lwd = 2, ylab = "Median age", xlab="Time (Ma)", main= "Taxon age", ylim=c(0,max(tbl$M_age,na.rm =T)+1),xlim=c(min(time),0))
+	plot(time,tbl$median_age, type="l",lwd = 2, ylab = "Median age", xlab="Time (Ma)", main= "Taxon age", ylim=c(0,max(tbl$M_age,na.rm =T)+1),xlim=c(min(time),0))
 	polygon(c(time, rev(time)), c(tbl$M_age, rev(tbl$m_age)), col = alpha("#504A4B",0.5), border = NA)
 	plot(time,tbl$turnover, type="l",lwd = 2, ylab = "Fraction of new taxa", xlab="Time (Ma)", main= "Turnover", ylim=c(0,max(tbl$M_turnover,na.rm =T)+.1),xlim=c(min(time),0))
 	polygon(c(time, rev(time)), c(tbl$M_turnover, rev(tbl$m_turnover)), col = alpha("#504A4B",0.5), border = NA)
@@ -2322,7 +2317,7 @@ def MCMC(all_arg):
 		elif rr<f_update_q: # q/alpha
 			q_rates=np.zeros(len(q_ratesA))+q_ratesA
 			if TPP_model == 1: 
-				q_rates, hasting = update_q_multiplier(q_ratesA,d=d2[1],f=0.5)
+				q_rates, hasting = update_q_multiplier(q_ratesA,d=d2[1],f=f_qrate_update)
 				if np.random.random()> 1./len(q_rates) and argsG == 1:
 					alpha_pp_gamma, hasting2 = update_multiplier_proposal(alpha_pp_gammaA,d2[0]) # shape prm Gamma
 					hasting += hasting2
@@ -2391,7 +2386,7 @@ def MCMC(all_arg):
 			ind1=range(0,len(fossil))
 			ind2=[]
 			if it>0 and rr<f_update_se: # recalculate likelihood only for ts, te that were updated
-				ind1=(ts-te != tsA-teA).nonzero()[0]
+				ind1=((ts-te != tsA-teA).nonzero()[0]).tolist()
 				ind2=(ts-te == tsA-teA).nonzero()[0]
 			lik_fossil=zeros(len(fossil))
 
@@ -2452,8 +2447,7 @@ def MCMC(all_arg):
 						YangGamma = [1]
 						if argsG :
 							YangGamma=get_gamma_rates(q_rates[0])
-
-						lik_fossil = np.array(PyRateC_NHPP_lik(use_DA, ind1, ts, te, q_rates[1], YangGamma, cov_par[2], M[len(M)-1]))
+						lik_fossil = np.array(PyRateC_NHPP_lik(use_DA==1, ind1, ts, te, q_rates[1], YangGamma, cov_par[2], M[len(M)-1]))
 
 						# Check correctness of results by comparing with python version
 						if sanityCheckForPyRateC == 1:
@@ -2950,7 +2944,7 @@ p.add_argument('-b',      type=float, help='burnin', default=0, metavar=0)
 p.add_argument('-thread', type=int, help='no. threads used for BD and NHPP likelihood respectively (set to 0 to bypass multi-threading)', default=[0,0], metavar=4, nargs=2)
 
 # MCMC ALGORITHMS
-p.add_argument('-A',        type=int, help='0) parameter estimation, 1) marginal likelihood, 2) BDMCMC, 3) DPP, 4) RJMCMC', default=2, metavar=2)
+p.add_argument('-A',        type=int, help='0) parameter estimation, 1) marginal likelihood, 2) BDMCMC, 3) DPP, 4) RJMCMC', default=4, metavar=4)
 p.add_argument("-use_DA",   help='Use data augmentation for NHPP likelihood opf extant taxa', action='store_true', default=False)
 p.add_argument('-r',        type=int,   help='MC3 - no. MCMC chains', default=1, metavar=1)
 p.add_argument('-t',        type=float, help='MC3 - temperature', default=.03, metavar=.03)
@@ -3012,6 +3006,7 @@ p.add_argument('-tR',     type=float, help='Tuning - window size (rates)', defau
 p.add_argument('-tS',     type=float, help='Tuning - window size (time of shift)', default=1., metavar=1.)
 p.add_argument('-fR',     type=float, help='Tuning - fraction of updated values (rates)', default=.5, metavar=.5)
 p.add_argument('-fS',     type=float, help='Tuning - fraction of updated values (shifts)', default=.7, metavar=.7)
+p.add_argument('-fQ',     type=float, help='Tuning - fraction of updated values (q rates, TPP)', default=.5, metavar=.5)
 p.add_argument('-tC',     type=float, help='Tuning - window sizes cov parameters (l,m,q)', default=[.2, .2, .15], nargs=3)
 p.add_argument('-fU',     type=float, help='Tuning - update freq. (q: .02, l/m: .18, cov: .08)', default=[.02, .18, .08], nargs=3)
 p.add_argument('-multiR', type=int,   help='Tuning - Proposals for l/m: 0) sliding win 1) muliplier ', default=1, metavar=1)
@@ -3101,6 +3096,7 @@ d3=args.tR                     # win-size (rates)
 f_rate=args.fR                 # fraction of updated values (rates)
 d4=args.tS                     # win-size (time of shift)
 f_shift=args.fS                # update frequency (time of shift) || will turn into 0 when no rate shifts
+f_qrate_update =args.fQ        # update frequency (preservation rates under TPP model)
 freq_list=args.fU              # generate update frequencies by parm category
 d5=args.tC                     # win-size (cov)
 d_hyperprior=np.array(args.tHP)          # win-size hyper-priors onf l/m (or W_scale)
@@ -3929,14 +3925,16 @@ if len(fixed_times_of_shift)>0:
 	o2 += "\nUsing birth-death model with fixed times of rate shift: "
 	for i in fixed_times_of_shift: o2 += "%s " % (i)
 o2+= "\n"+prior_setting
-if argsHPP == 1: 
-	if TPP_model == 0: 
-		o2+="Using Homogeneous Poisson Process of preservation (HPP)."
-	else: 
-		o2 += "\nUsing Time-variable Poisson Process of preservation (TPP) at: "
-		for i in times_q_shift: o2 += "%s " % (i)
+
+if use_se_tbl != 1:
+	if argsHPP == 1: 
+		if TPP_model == 0: 
+			o2+="Using Homogeneous Poisson Process of preservation (HPP)."
+		else: 
+			o2 += "\nUsing Time-variable Poisson Process of preservation (TPP) at: "
+			for i in times_q_shift: o2 += "%s " % (i)
 	
-else: o2+="Using Non-Homogeneous Poisson Process of preservation (NHPP)."
+	else: o2+="Using Non-Homogeneous Poisson Process of preservation (NHPP)."
 
 version_notes="""\n
 Please cite: \n%s\n
