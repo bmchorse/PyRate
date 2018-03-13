@@ -7,6 +7,10 @@ from scipy.special import gamma
 np.set_printoptions(suppress= 1) # prints floats, no scientific notation
 np.set_printoptions(precision=3) # rounds all array elements to 3rd digit
 
+# CALC BAYS FACTORS BASED ON PROB pI
+def F(p=0.05, BF_threshold=0.6):
+	A = exp(BF_threshold/2.)*(p/(1-p))
+	return A/(A+1)
 
 p = argparse.ArgumentParser() #description='<input file>') 
 p.add_argument('-A',         type=int,   help='set 1 to estimate marginal likelihood', default=0, metavar=0)
@@ -22,6 +26,8 @@ p.add_argument('-seed',      type=int,   help='seed (if -1 -> random)', default=
 p.add_argument('-mu_species',type=int,   help='set to 1 to save extinction rates foreach trait combination', default=0, metavar=0)
 p.add_argument('-traits',    type=int ,  help="index trait(s)",metavar='',nargs='+',default=[1])
 p.add_argument('-const',     type=int ,  help="if set to 1: trait independent rate",metavar=0,default=0)
+p.add_argument('-out',         type=str, help='output string', default="", metavar="")
+p.add_argument('-pI',         type=float,help='output string', default=0.05, metavar=0.05)
 
 
 
@@ -75,8 +81,8 @@ def update_normal(q,d=0.5,f=0.5):
  	new_q = q + n
 	return new_q
 
-# the first is redundant and fixed to 0!
 def update_normal_first_zero(q,d=0.5,f=0.5):
+	# the first is redundant and fixed to 0!
 	S=np.shape(q)
 	ff=np.random.binomial(1,f,S)
 	ff[0] = 0
@@ -85,6 +91,13 @@ def update_normal_first_zero(q,d=0.5,f=0.5):
  	new_q = q + n
 	return new_q
 	
+
+
+def update_indicators(I_vecA):
+	r= np.random.choice(np.arange(n_traits))
+	I_vec_temp = 0 + I_vecA
+	I_vec_temp[r] = 1 - I_vec_temp[r] # if 0 return(1), if 1 return(0)
+	return I_vec_temp
 
 def prior_gamma(L,a=1,b=0.01):
 	return scipy.stats.gamma.logpdf(L, a, scale=1./b,loc=0)
@@ -220,9 +233,9 @@ else:
 	trait_tag=""
 	trait_name_vec = []
 	for i in args.traits: 
-		trait_tag+= "%s_" % (tr_name_list[i-1])
+		#trait_tag+= "%s_" % (tr_name_list[i-1])
 		trait_name_vec.append(tr_name_list[i-1])
-	print trait_tag
+	trait_tag = "BVS"+args.out
 	if args.const== 1: trait_tag = "const_"
 	if max_age < np.inf or min_age > 0:
 		out_file_name = "trait_%s%s-%s%s.log" % (trait_tag,max_age,min_age,m_tag)
@@ -270,10 +283,10 @@ for i in range(n_lineages):
 		unique_trait_comb.append(s)
 		unique_trait_comb_indx.append(i)
 print "unique_trait_comb", len(unique_trait_comb_indx)
-print unique_trait_comb
-#quit()
-print trait_comb_all, len(trait_comb_all)
-print tr_list
+# print unique_trait_comb
+# #quit()
+# print trait_comb_all, len(trait_comb_all)
+# print tr_list
 
 
 # count n. of species in each combination of character states
@@ -285,10 +298,11 @@ for i in unique_trait_comb:
 
 # init model parameters
 Y_vecA = [np.zeros(i) for i in trait_categories_list] #
+I_vecA = np.zeros(n_traits) # trait-specific indicators
 Gamma_a_prior = 1.5  # Gamma hyperprior: for a>1, mean = b / (a-1) | invGamma
 Gamma_b_prior = 10. # Gamma on tau: mean on s2 -> 1./(a/b)
 sd_hp = [sample_tau_hp_gibbs(Y_vecA[i],Gamma_a_prior,Gamma_b_prior) for i in range(n_traits)]  #
-multipA = np.array([get_mle_mu(ts_list,te_list)])
+multipA = np.array([get_mle_mu(ts_list,te_list)]) # mean extinction rate
 likA = -np.inf
 prior_Y = [sum(prior_normal(Y_vecA[i],m=0,sd=sd_hp[i])) for i in range(n_traits)]
 prior_m = 0 # uniform prior on mean rate (can be replaced by something else)
@@ -310,11 +324,14 @@ wlog=csv.writer(logfile, delimiter='\t')
 
 head="it\tposterior\tlikelihood\tprior\tmean_r"
 for i in range(n_traits):
+	head+= "\tI_%s" % (trait_name_vec[i])
+for i in range(n_traits):
 	for j in range(trait_categories_list[i]):
 		head+= "\tm_%s_%s" % (trait_name_vec[i],j)
 for i in range(n_traits):
 	for j in range(trait_categories_list[i]):
 		head+= "\tsd_%s_%s" % (trait_name_vec[i],j)
+
 
 if use_HP==1: head += "\tbeta_hp"
 
@@ -350,16 +367,15 @@ if args.A==1:
 	freq_update_m  = 0.4
 	ws_multi = 1.2
 else:
-	freq_update_Ys = 0.75
-	freq_update_m  = 0.15
+	freq_update_Ys = 0.40
+	freq_update_m  = 0.05
 
 if args.const == 1: # constant rate model
 	freq_update_Ys = 0
 	freq_update_m  = 1
 
+freq_update_I = 0.50
 
-#print Y_vecA
-#quit()
 # RUN MCMC
 while iteration <= n_iterations:
 	if iteration == it_change[ind_temp]+1:
@@ -369,14 +385,20 @@ while iteration <= n_iterations:
 	
 	gibbs = 0
 	rr = np.random.random()
-	if rr < freq_update_Ys:
-		indx_updated_Y = np.random.choice(range(n_traits)) 
+	if rr < freq_update_Ys: # update state-spec multipliers
+		indx_updated_Y = np.random.choice(range(n_traits))
 		Y_vec = []+Y_vecA
 		Y_vec[indx_updated_Y] = update_normal_first_zero(Y_vec[indx_updated_Y])
 		multip,hasting = multipA,0
-	elif rr <(freq_update_Ys+freq_update_m):
+		I_vec = I_vecA
+	elif rr <(freq_update_Ys+freq_update_m): # update mean extinction rate
 		multip,hasting = update_multiplier(multipA,ws_multi,1)
 		Y_vec = Y_vecA
+		I_vec = I_vecA
+	elif rr <(freq_update_Ys+freq_update_m+freq_update_I) and iteration>1000: # update Indicators
+		I_vec = update_indicators(I_vecA)
+		Y_vec = Y_vecA
+		multip,hasting = multipA,0
 	elif args.A==0: # further during TDI stop sampling priors
 		gibbs = 1
 		if use_HP==1: 
@@ -387,11 +409,16 @@ while iteration <= n_iterations:
 			Gamma_b_prior = [sample_G_rate_gibbs([sd_hp[i]],Gamma_a_prior) for i in range(n_traits)]
 		multip,hasting = multipA,0
 		Y_vec = Y_vecA
+		I_vec = I_vecA
 	
 	# lineage-sp rates
 	sum_rates,prior_Y = np.zeros(n_lineages),0
 	for i in range(n_traits):
-		transform_trait_multiplier = exp(Y_vec[i])/sum(exp(Y_vec[i])) #
+		# if indicator is =0, the trait is not doing anything to the extinction rate
+		if I_vec[i]==0:
+			transform_trait_multiplier = np.ones(len(Y_vec[i]))/len(Y_vec[i])
+		else:
+			transform_trait_multiplier = exp(Y_vec[i])/sum(exp(Y_vec[i])) #
 		# create array of multipliers (1 per species) based on trait states
 		# using trait states as indexes (must start from 0 and be sequential!)
 		sum_rates += transform_trait_multiplier[tr_list[:,i]]
@@ -402,11 +429,13 @@ while iteration <= n_iterations:
 	rates = multip * sum_rates
 	lik =  sum(get_death_lik_lineage(rates,bl,ex))
 	prior = prior_Y + prior_m
+	prior += sum(log(args.pI)*I_vec)
 	
 	if (lik - likA)*temperature + (prior - priorA) + hasting >= log(np.random.random()) or gibbs==1:
 		Y_vecA = Y_vec
 		multipA = multip
 		likA = lik
+		I_vecA = I_vec
 		priorA = prior
 		ratesA = rates
 
@@ -414,19 +443,28 @@ while iteration <= n_iterations:
 		print iteration,likA, multipA
 		post_temp=[]
 		for i in range(n_traits):
-			transform_trait_multiplier = exp(Y_vec[i])/sum(exp(Y_vec[i]))
+			if I_vecA[i]==0:
+				transform_trait_multiplier = np.ones(len(Y_vec[i]))/len(Y_vec[i])
+			else:
+				transform_trait_multiplier = exp(Y_vec[i])/sum(exp(Y_vec[i])) #
 			post_temp += list(transform_trait_multiplier) #/mean(transform_trait_multiplier)) 
 		print np.array(post_temp)
-		print "Y ARRAY:", Y_vecA
+		print I_vecA
+		#print "Y ARRAY:", Y_vecA
 	if iteration % s_freq ==0:
 		post_temp,post_sd=[],[]
 		for i in range(n_traits):
 			#transform_trait_multiplier_temp = Y_vec[i] # exp(Y_vec[i])/sum(exp(Y_vec[i]))
 			#post_temp += list(transform_trait_multiplier_temp)
+			if I_vecA[i]==0:
+				transform_trait_multiplier_temp = np.ones(len(Y_vec[i]))/len(Y_vec[i])
+			else:
+				transform_trait_multiplier_temp = exp(Y_vec[i])/sum(exp(Y_vec[i])) #
+			
 			transform_trait_multiplier_temp = exp(Y_vec[i])/sum(exp(Y_vec[i]))
 			post_temp += list(transform_trait_multiplier_temp) #/mean(transform_trait_multiplier_temp)) 
 			post_sd   += list(sd_hp[i])
-		post_log = [iteration, likA+priorA, likA, priorA,multipA[0]] + post_temp + post_sd 
+		post_log = [iteration, likA+priorA, likA, priorA,multipA[0]] + list(I_vecA) + post_temp + post_sd
 		if use_HP==1: post_log += [Gamma_b_prior]
 		if use_HP==2: post_log += Gamma_b_prior
 		if args.mu_species==1: post_log += list(ratesA[unique_trait_comb_indx])
