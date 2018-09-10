@@ -5,7 +5,7 @@ import random as rand
 import warnings, imp
 
 version= "PyRate"
-build  = "v2.0 - 20180313"
+build  = "v2.0 - 20180817"
 if platform.system() == "Darwin": sys.stdout.write("\x1b]2;%s\x07" % version)
 
 citation= """Silvestro, D., Schnitzler, J., Liow, L.H., Antonelli, A. and Salamin, N. (2014)
@@ -888,12 +888,19 @@ def get_gamma_rates(a):
 	return array(m)*s # SCALED VALUES
 
 def init_ts_te(FA,LO):
-	ts=FA+np.random.exponential(.75, len(FA)) # exponential random starting point
-	tt=np.random.beta(2.5, 1, len(LO)) # beta random starting point
-	ts=FA+(.025*FA) #IMPROVE INIT
+	#ts=FA+np.random.exponential(.75, len(FA)) # exponential random starting point
+	#tt=np.random.beta(2.5, 1, len(LO)) # beta random starting point
+	#ts=FA+(.025*FA) #IMPROVE INIT
+	#te=LO-(.025*LO) #IMPROVE INIT
+	
+	brl = FA-LO
+	q = N/(brl+0.1)
+	
+	ts= FA+np.random.exponential(1./q,len(q))
+	te= LO-np.random.exponential(1./q,len(q))
+		
 	if max(ts) > boundMax:
 		ts[ts>boundMax] = np.random.uniform(FA[ts>boundMax],boundMax,len(ts[ts>boundMax])) # avoit init values outside bounds
-	te=LO-(.025*LO) #IMPROVE INIT
 	if min(te) < boundMin:
 		te[te<boundMin] = np.random.uniform(boundMin,LO[te<boundMin],len(te[te<boundMin])) # avoit init values outside bounds
 	#te=LO*tt
@@ -966,6 +973,13 @@ def update_rates_sliding_win(L,M,tot_L,mod_d3):
 	for i in range(len(M)): Mn[i]=update_parameter(M[i],0, inf, mod_d3, f_rate)
 	#Ln,Mn=Ln * scale_factor/tot_L , Mn * scale_factor/tot_L
 	return Ln,Mn, 1
+
+def update_parameter_normal_vec(oldL,d,f=.25):
+	S = np.shape(oldL)
+	ii = np.random.normal(0,d,S)
+	ff = np.random.binomial(1,f,S)
+	s= oldL + ii*ff	
+	return s
 
 
 def update_rates_multiplier(L,M,tot_L,mod_d3):
@@ -1043,6 +1057,73 @@ def update_ts_te(ts, te, d1):
 	tsn[SP_not_in_window] = max([boundMax, max(tsn[SP_in_window])])
 	ten[EX_not_in_window] = min([boundMin, min(ten[EX_in_window])])
 	return tsn,ten
+
+
+#### GIBBS SAMPLER S/E
+def draw_se_gibbs(fa,la,q_rates,q_times):	
+	t = np.sort(np.array([fa, la] + list(q_times)))[::-1]
+
+	# sample ts
+	prior_to_fa = np.arange(len(q_times))[q_times>fa]
+	tfa = (q_times[prior_to_fa]-fa)[::-1] # time since fa
+	qfa = q_rates[prior_to_fa][::-1] # rates before fa
+
+	ts_temp=0
+	for i in range(len(qfa)):
+		q = qfa[i]
+		deltaT = np.random.exponential(1./q)
+		ts_temp = min(ts_temp+deltaT, tfa[i])		
+		if ts_temp < tfa[i]: 
+			break
+
+	ts= ts_temp+fa
+	#print "TS:", ts, fa
+	#print q_times
+	#print la
+	
+	if la>0:
+		# sample te
+		after_la = np.arange(len(q_times))[q_times<la]
+		tla = (la-q_times[after_la]) # time after la
+		qla = q_rates[after_la-1] # rates after la
+		#print "QLA", qla, tla
+		te_temp=0
+		i,attempt=0,0
+		while True:
+			q = qla[i]
+			deltaT = np.random.exponential(1./q)
+			te_temp = min(te_temp+deltaT, tla[i])		
+			#print attempt,i,te_temp,len(qla)
+			if te_temp < tla[i]: 
+				break
+			i+=1
+			attempt+=1
+			if i == len(qla):
+				i= 0 # try again
+			if attempt==100:
+				te_temp = np.random.uniform(0,la)
+				break
+	
+		te= la-te_temp
+		#print "TE:", te
+	else:
+		te=0
+	return (ts,te)
+
+def gibbs_update_ts_te(q_rates,q_time_frames):
+	q_times= q_time_frames+0
+	q_times[0] = np.inf
+	new_ts = []
+	new_te = []
+	for sp_indx in range(0,len(FA)):
+		#print "sp",sp_indx
+		s,e = draw_se_gibbs(FA[sp_indx],LO[sp_indx],q_rates,q_times)
+		new_ts.append(s)
+		new_te.append(e)
+	return np.array(new_ts), np.array(new_te)
+	
+
+
 
 def seed_missing(x,m,s): # assigns random normally distributed trait values to missing data
 	return np.isnan(x)*np.random.normal(m,s)+np.nan_to_num(x)
@@ -2195,7 +2276,7 @@ def MCMC(all_arg):
 				MAt = restore_init_values[4]
 				if len(LAt) == len(LA): LA = LAt # if restored mcmc has different number of rates ignore them
 				if len(MAt) == len(MA): MA = MAt
-			if use_ADE_model == 1: MA = np.random.uniform(3,5,len(timesMA)-1)
+			if use_ADE_model >= 1: MA = np.random.uniform(3,5,len(timesMA)-1)
 			if use_Death_model == 1: LA = np.ones(1)
 			if useDiscreteTraitModel == 1: 
 				LA = init_BD(len(lengths_B_events)+1)
@@ -2238,9 +2319,15 @@ def MCMC(all_arg):
 		SA=sum(tsA-teA)
 		W_shapeA=1.
 		
-		if analyze_tree ==1:
+		if analyze_tree >=1:
+			MA = LA*np.random.random()
 			r_treeA = np.random.random()
 			m_treeA = np.random.random()
+			if analyze_tree==4:
+				r_treeA = np.random.random(len(phylo_times_of_shift))+2.
+				m_treeA = np.random.random(len(phylo_times_of_shift))
+				if args_bdc: 
+					r_treeA = np.ones(len(phylo_times_of_shift))*0.8
 
 	else: # restore values
 		[itt, n_proc_,PostA, likA, priorA,tsA,teA,timesLA,timesMA,LA,MA,q_ratesA, cov_parA, lik_fossilA,likBDtempA]=arg
@@ -2310,9 +2397,10 @@ def MCMC(all_arg):
 		mod_d3= list_d3[tmp] # window size rates
 		mod_d4= list_d4[tmp] # window size shift times
 		
-        
 		if rr<f_update_se: # ts/te
 			ts,te=update_ts_te(tsA,teA,mod_d1)
+			if use_gibbs_se_sampling:
+				ts,te = gibbs_update_ts_te(q_ratesA,np.sort(np.array([np.inf,0]+times_q_shift))[::-1])
 			tot_L=sum(ts-te)
 		elif rr<f_update_q: # q/alpha
 			q_rates=np.zeros(len(q_ratesA))+q_ratesA
@@ -2527,7 +2615,7 @@ def MCMC(all_arg):
 					else:
 						likBDtemp = BD_lik_discrete_trait([ts,te,L,M])
 						
-				elif use_ADE_model == 1 and TPP_model == 1: 
+				elif use_ADE_model >= 1 and TPP_model == 1: 
 					likBDtemp = BD_age_lik_vec_times([ts,te,timesL,W_shape,M,q_rates,q_time_frames])
 				elif fix_Shift == 1:
 					if use_ADE_model == 0: likBDtemp = BPD_lik_vec_times([ts,te,timesL,L,M])
@@ -2545,10 +2633,10 @@ def MCMC(all_arg):
 						m = M[temp_m]
 						if use_ADE_model == 0:
 							args.append([ts, te, up, lo, m, 'm', cov_par[1],1])
-						elif use_ADE_model == 1:
+						elif use_ADE_model >= 1:
 							args.append([ts, te, up, lo, m, 'm', cov_par[1],W_shape,q_rates[1]])
 			
-					if hasFoundPyRateC and model_cov==0:
+					if hasFoundPyRateC and model_cov==0 and use_ADE_model == 0:
 						likBDtemp = PyRateC_BD_partial_lik(ts, te, timesL, timesM, L, M)
 
 						# Check correctness of results by comparing with python version
@@ -2666,7 +2754,7 @@ def MCMC(all_arg):
 			if min(abs(np.diff(timesL)))<=min_allowed_t or min(abs(np.diff(timesM)))<=min_allowed_t: prior = -np.inf			
 		
 		priorBD= get_hyper_priorBD(timesL,timesM,L,M,maxTs,hyperP)
-		if use_ADE_model == 1:
+		if use_ADE_model >= 1:
 			# M in this case is the vector of Weibull scales
 			priorBD+= sum(prior_normal(log(W_shape),2)) # Normal prior on log(W_shape): highest prior pr at W_shape=1
 		
@@ -2680,12 +2768,41 @@ def MCMC(all_arg):
 		prior += prior_root_age(maxTs,maxFA,maxFA)
 		
 		# add tree likelihood
-		if analyze_tree ==1:
+		if analyze_tree ==1: # independent rates model
 			r_tree, h1 = update_multiplier_proposal(r_treeA,1.1) # net diversification
 			m_tree, h2 = update_multiplier_proposal(m_treeA,1.1) # extinction rate
 			l_tree = m_tree+r_tree
 			tree_lik = treeBDlikelihood(tree_node_ages,l_tree,m_tree,rho=tree_sampling_frac)
 			hasting = hasting+h1+h2
+		elif analyze_tree ==2: # compatible model (BDC)
+			r_tree = update_parameter(r_treeA, m=0, M=1, d=0.1, f=1)			
+			l_tree = (M[0]*r_tree) + (L[0]-M[0])
+			m_tree = M[0]*r_tree
+			tree_lik = treeBDlikelihood(tree_node_ages,l_tree,m_tree,rho=tree_sampling_frac)
+		elif analyze_tree ==3: # equal rate model
+			r_tree = 0
+			l_tree = L[0]
+			m_tree = M[0]
+			tree_lik = treeBDlikelihood(tree_node_ages,l_tree,m_tree,rho=tree_sampling_frac)
+		elif analyze_tree ==4: # skyline independent model
+			m_tree,r_tree,h1,h2 = m_treeA+0., r_treeA+0.,0,0
+			if args_bdc: # BDC model
+				ind = np.random.choice(range(len(m_tree)))
+				r_tree[ind] = update_parameter(r_treeA[ind], 0, 1, 0.1, 1)			
+				l_tree = L[::-1] - M[::-1] + M[::-1]*r_tree
+				m_tree = M[::-1]*r_tree #  so mu > 0
+			else:	
+				m_tree, h2 = update_q_multiplier(m_treeA,d=1.1,f=0.5) # extinction rate
+				r_tree, h1 = update_q_multiplier(r_treeA,d=1.1,f=0.5) # speciation rate
+				l_tree = r_tree*m_tree # this allows extinction > speciation
+				# args = (x,t,l,mu,sampling,posdiv=0,survival=1,groups=0)
+			
+			if np.min(l_tree)<=0:
+				tree_lik = -np.inf
+			else:
+				tree_lik = treeBDlikelihoodSkyLine(tree_node_ages,phylo_times_of_shift,l_tree,m_tree,tree_sampling_frac)
+				hasting = hasting+h1+h2
+				prior += sum(prior_gamma(l_tree,1.1,1)) + sum(prior_gamma(m_tree,1.1,1))
 		else: 
 			tree_lik = 0
 		
@@ -2703,6 +2820,11 @@ def MCMC(all_arg):
 		if it>0 and (it-burnin) % (I_effective/len(temperatures)) == 0 and it>burnin or it==I-1: 
 			accept_it = 1 # when temperature changes always accept first iteration
 			PostA = Post
+        	
+		if rr<f_update_se and use_gibbs_se_sampling==1:
+			accept_it = 1
+		
+		
 		
 		#print Post, PostA, q_ratesA, sum(lik_fossil), sum(likBDtemp),  prior
 		if Post>-inf and Post<inf:
@@ -2724,7 +2846,7 @@ def MCMC(all_arg):
 				cov_parA=cov_par
 				W_shapeA=W_shape
 				tree_likA = tree_lik
-				if analyze_tree ==1:
+				if analyze_tree >=1:
 					r_treeA = r_tree
 					m_treeA = m_tree
 					
@@ -2749,15 +2871,21 @@ def MCMC(all_arg):
 				else:
 					print "\tt.frames:", timesLA, "(sp.)"
 					print "\tt.frames:", timesMA, "(ex.)"
-				if use_ADE_model == 1: 
+				if use_ADE_model >= 1: 
 					print "\tWeibull.shape:", round(W_shapeA,3)
-					print "\tWeibull.scale:", MA
+					print "\tWeibull.scale:", MA, 1./MA
 				else: 
 					print "\tsp.rates:", LA
 					print "\tex.rates:", MA
 				if analyze_tree ==1:
 					print np.array([tree_likA, r_treeA+m_treeA, m_treeA])
-				
+				if analyze_tree==2:
+					ltreetemp,mtreetemp = (M[0]*r_tree) + (L[0]-M[0]), M[0]*r_tree
+					print np.array([tree_likA,ltreetemp,mtreetemp,ltreetemp-mtreetemp,LA[0]-MA[0]])
+				if analyze_tree==4:
+					ltreetemp,mtreetemp = list(r_treeA[::-1]*m_treeA[::-1]), list(m_treeA[::-1])
+					print np.array([tree_likA] + ltreetemp + mtreetemp)
+					
 				if est_hyperP == 1: print "\thyper.prior.par", hyperPA
 
 				
@@ -2775,7 +2903,7 @@ def MCMC(all_arg):
 
 		if n_proc != 0: pass
 		elif it % sample_freq ==0 and it>=burnin or it==0 and it>=burnin:
-			s_max=max(tsA)
+			s_max=np.max(tsA)
 			if fix_SE == 0:
 				if TPP_model == 0: log_state = [it,PostA, priorA, sum(lik_fossilA), likA-sum(lik_fossilA), q_ratesA[1], q_ratesA[0]]
 				else: 
@@ -2790,18 +2918,51 @@ def MCMC(all_arg):
 				if est_COVAR_prior == 1: log_state += [covar_prior]
 
 			if TDI<2: # normal MCMC or MCMC-TI
-				log_state += s_max,min(teA)
+				log_state += s_max,np.min(teA)
 				if TDI==1: log_state += [temperature]
 				if est_hyperP == 1: log_state += list(hyperPA)
-				if use_ADE_model == 0: log_state += list(LA)
-				else: log_state+= [W_shapeA]
-				log_state += list(MA) # This is W_scale in the case of ADE models
-				if use_ADE_model == 1: log_state+= list(MA * gamma(1 + 1./W_shapeA))
+				if use_ADE_model == 0: 
+					log_state += list(LA)
+				elif use_ADE_model == 1: 
+					log_state+= [W_shapeA]
+				elif use_ADE_model == 2: 
+					# this correction is for the present (recent sp events are unlikely to show up)
+					xtemp = np.linspace(0,5,101)
+					pdf_q_sampling = np.round(1-exp(-q_ratesA[1]*xtemp),2)
+					#try: 
+					#	q95 = np.min([xtemp[pdf_q_sampling==0.75][0],0.25*s_max]) # don't remove more than 25% of the time window
+					#except: q95 = 0.25*s_max
+					q95 = min(tsA[tsA>0])
+					# estimate sp rate based on ex rate and ratio between observed sp and ex events
+					corrSPrate = float(len(tsA[tsA>q95]))/max(1,len(teA[teA>q95])) * 1./MA 
+					log_state+= list(corrSPrate)
+				
+				if use_ADE_model <= 1:
+					log_state += list(MA) # This is W_scale in the case of ADE models
+				if use_ADE_model == 2:
+					log_state += list(1./MA) # when using model 2 shape = 1, and 1/scale = extinction rate
+					
+				if use_ADE_model >= 1: 
+					log_state+= list(MA * gamma(1 + 1./W_shapeA))
 				if fix_Shift== 0:
 					log_state += list(timesLA[1:-1])
 					log_state += list(timesMA[1:-1])
 				if analyze_tree ==1:
 					log_state += [tree_likA, r_treeA+m_treeA, m_treeA]
+				if analyze_tree ==2:
+					log_state += [tree_likA, (MA[0]*r_treeA) + (LA[0]-MA[0]), MA[0]*r_treeA]
+				if analyze_tree ==3:
+					log_state += [tree_likA, LA[0], MA[0]]
+				if analyze_tree ==4:
+					if args_bdc: # BDC model
+						ltreetemp = (MA[::-1]*r_treeA) + (LA[::-1]-MA[::-1])
+						mtreetemp =  MA[::-1]*r_treeA
+						ltreetemp = list(ltreetemp[::-1])
+						mtreetemp = list(mtreetemp[::-1])
+					else:	
+						ltreetemp,mtreetemp = list(r_treeA[::-1]*m_treeA[::-1]), list(m_treeA[::-1])
+					log_tree_lik_temp = [tree_likA] + ltreetemp + mtreetemp					
+					log_state += log_tree_lik_temp
 				
 			elif TDI == 2: # BD-MCMC
 				log_state+= [len(LA), len(MA), s_max,min(teA)]
@@ -2915,6 +3076,8 @@ p.add_argument('-log_marginal_rates',type=int,help='0) save summary file, defaul
 # phylo test
 p.add_argument('-tree',       type=str,help="Tree file (NEXUS format)",default="", metavar="")
 p.add_argument('-sampling',   type=float,help="Taxon sampling (phylogeny)",default=1., metavar=1.)
+p.add_argument('-bdc',      help='Run BDC:Compatible model', action='store_true', default=False)
+p.add_argument('-eqr',      help='Run BDC:Equal rate model', action='store_true', default=False)
 
 # PLOTS AND OUTPUT
 p.add_argument('-plot',       metavar='<input file>', type=str,help="RTT plot (type 1): provide path to 'marginal_rates.log' files or 'marginal_rates' file",default="")
@@ -2966,6 +3129,7 @@ p.add_argument('-rj_Gb',       type=float, help='RJ - rate of gamma proposal (if
 p.add_argument('-rj_beta',     type=float, help='RJ - shape of beta multiplier (if rj_pr 1)',default=10, metavar=10)
 p.add_argument('-rj_dm',       type=float, help='RJ - allow double moves (0: no, 1: yes)',default=0, metavar=0)
 p.add_argument('-rj_bd_shift', type=float, help='RJ - 0: only sample shifts in speciation; 1: only sample shifts in extinction',default=0.5, metavar=0.5)
+p.add_argument('-se_gibbs',    help='Use aprroximate S/E Gibbs sampler', action='store_true', default=False)
 
 # PRIORS
 p.add_argument('-pL',      type=float, help='Prior - speciation rate (Gamma <shape, rate>) | (if shape=n,rate=0 -> rate estimated)', default=[1.1, 1.1], metavar=1.1, nargs=2)
@@ -3060,7 +3224,7 @@ if constrain_time_frames == 1 or args.fixShift != "":
 	if TDI in [2,4]:
 		print("\nConstrained shift times (-mC,-fixShift) cannot be used with BD/RJ MCMC alorithms. Using standard MCMC instead.\n")
 		TDI = 0
-if args.ADE==1 and TDI>1: 
+if args.ADE>=1 and TDI>1: 
 	print("\nADE models (-ADE 1) cannot be used with BD/RJ MCMC alorithms. Using standard MCMC instead.\n")
 	TDI = 0
 mcmc_gen=args.n             # no. total mcmc generations
@@ -3104,6 +3268,11 @@ if model_cov==0: freq_list[2]=0
 f_update_se=1-sum(freq_list)
 if frac1==0: f_update_se=0
 [f_update_q,f_update_lm,f_update_cov]=f_update_se+np.cumsum(array(freq_list))
+
+
+if args.se_gibbs: use_gibbs_se_sampling = 1
+else: use_gibbs_se_sampling = 0
+
 
 multiR = args.multiR
 if multiR==0:
@@ -3262,7 +3431,7 @@ if path_dir_log_files != "":
 		if plot_type==3:
 			rtt_plot_bds.RTTplot_high_res(path_dir_log_files,args.grid_plot,int(burnin),root_plot)
 		elif plot_type==4:
-			rtt_plot_bds = rtt_plot_bds.plot_marginal_rates(path_dir_log_files,name_tag=file_stem,bin_size=args.grid_plot,burnin=int(burnin),min_age=0,max_age=root_plot,logT=args.logT)
+			rtt_plot_bds = rtt_plot_bds.plot_marginal_rates(path_dir_log_files,name_tag=file_stem,bin_size=args.grid_plot,burnin=burnin,min_age=0,max_age=root_plot,logT=args.logT)
 			
 		#except: sys.exit("""\nWarning: library pyrate_lib not found.\nMake sure PyRate.py and pyrate_lib are in the same directory.
 		#You can download pyrate_lib here: <https://github.com/dsilvestro/PyRate> \n""")
@@ -3341,7 +3510,7 @@ if use_se_tbl==0:
 		if output_wd=="": output_wd= get_self_path()
 	else: output_wd=args.wd
 
-	#print "\n",input_file, args.input_data, "\n"
+	print "\n",input_file, args.input_data, "\n"
 	try: input_data_module = imp.load_source(input_file, args.input_data[0])
 	except(IOError): sys.exit("\nInput file required. Use '-h' for command list.\n")
 
@@ -3466,6 +3635,7 @@ if no_starting_lineages>0:
 ################	
 
 if argsG == 1: out_name += "_G"
+if args.se_gibbs: out_name += "_seGibbs"
 
 ############################ SET BIRTH-DEATH MODEL ############################
 
@@ -3719,7 +3889,40 @@ if args.ADE == 1:
 	BPD_partial_lik = BD_age_partial_lik
 	out_name += "_ADE"
 	argsHPP = 1
-	
+
+if args.ADE == 2:
+	use_ADE_model = 2
+	BPD_partial_lik = BD_age_partial_lik
+	out_name += "_CorrBD"
+	argsHPP = 1
+	#list_all_occs = []
+	#for i in range(len(fossil)):
+	#	f =fossil[i]
+	#	list_all_occs = list_all_occs + list(f[f>0])
+	#
+	#list_all_occs = np.sort(np.array(list_all_occs))
+	#print (np.diff(list_all_occs))
+	#	
+	#quit()
+      #
+	#n_sampled_species_bins = np.linspace(0,max(FA),100)
+	#dT_sampled_sp_bins = n_sampled_species_bins[1]
+	#n_sampled_species = np.zeros(len(n_sampled_species_bins)-1)
+	#for i in range(len(fossil)):
+	#	occs_temp = fossil[i]
+	#	hist = np.histogram(occs_temp[occs_temp>0],bins=sort( n_sampled_species_bins ))
+	#	h = hist[0][::-1]
+	#	h[h>1] = 1
+	#	print hist
+	#	n_sampled_species += h
+	#print log(n_sampled_species), sum(n_sampled_species)
+	#sampling_prob = 1 - exp(-dT_sampled_sp_bins*0.5)
+	#est_true_sp = log(1 + n_sampled_species + n_sampled_species*sampling_prob)
+	#print est_true_sp[::-1]
+	#print np.diff(n_sampled_species)[::-1], mean(np.diff(n_sampled_species)[::-1])/dT_sampled_sp_bins
+	#print np.mean(np.diff(est_true_sp)[::-1])/dT_sampled_sp_bins
+	#print np.mean(np.diff(log(n_sampled_species+1))[::-1])
+	#quit()
 
 est_hyperP = 0
 use_cauchy = 0
@@ -3737,7 +3940,7 @@ else:
 		est_hyperP = 1
 		hypP_par = np.ones(2)
 
-if use_ADE_model == 1: 
+if use_ADE_model >= 1: 
 	hypP_par[1]=0.1
 	tot_extant = -1
 	d_hyperprior[0]=1 # first hyper-prior on sp.rates is not used under ADE, thus not updated (multiplier update =1)
@@ -3829,6 +4032,26 @@ if args.tree != "":
 		sys.exit("Tree format not recognized (NEXUS file required). \n")
 	tree_sampling_frac = args.sampling
 	analyze_tree = 1
+	if args.bdc: analyze_tree = 2
+	if args.eqr: analyze_tree = 3
+	
+	if fix_Shift == 1:
+		print "Using Skyline indepdent model"
+		phylo_bds_likelihood = imp.load_source("phylo_bds_likelihood", "%s/pyrate_lib/phylo_bds_likelihood.py" % (self_path))
+		analyze_tree = 4
+		treeBDlikelihoodSkyLine = phylo_bds_likelihood.TreePar_LikShifts 
+		# args = (x,t,l,mu,sampling,posdiv=0,survival=1,groups=0)
+		tree_node_ages = np.sort(tree_node_ages)
+		phylo_times_of_shift = np.sort(np.array(list(fixed_times_of_shift) + [0]))
+		tree_sampling_frac = np.array([tree_sampling_frac] + list(np.ones(len(fixed_times_of_shift))))
+		print phylo_times_of_shift
+		print tree_node_ages
+		if args.bdc: args_bdc = 1
+		else: args_bdc = 0
+		# print tree_sampling_frac
+		#quit()
+														
+	
 	TDI = 0
 
 
@@ -3894,9 +4117,8 @@ if args.PPmodeltest== 1:
 # CREATE C++ OBJECTS
 if hasFoundPyRateC:
 	if use_se_tbl==1:
-		fossil = [np.array([0])]
-	
-	PyRateC_setFossils(fossil) # saving all fossil data as C vector
+		pass
+	else: PyRateC_setFossils(fossil) # saving all fossil data as C vector
 
 	if args.qShift != "":  # q_shift times
 		tmpEpochs = np.sort(np.array(list(times_q_shift)+[max(FA)+1]+[0]))[::-1]
@@ -3911,10 +4133,13 @@ try: os.mkdir(path_dir)
 except(OSError): pass
 
 suff_out=out_name
-if TDI<=1: suff_out+= "BD%s-%s" % (args.mL,args.mM)
-if TDI==1: suff_out+= "_TI"
-if TDI==3: suff_out+= "dpp"
-if TDI==4: suff_out+= "rj"
+if args.eqr: suff_out+= "_EQR"
+elif args.bdc: suff_out+= "_BDC"
+else:
+	if TDI<=1: suff_out+= "BD%s-%s" % (args.mL,args.mM)
+	if TDI==1: suff_out+= "_TI"
+	if TDI==3: suff_out+= "dpp"
+	if TDI==4: suff_out+= "rj"
 
 # OUTPUT 0 SUMMARY AND SETTINGS
 o0 = "\n%s build %s\n" % (version, build)
@@ -3981,9 +4206,13 @@ if TDI<2:
 	if use_ADE_model == 0 and useDiscreteTraitModel == 0: 
 		for i in range(time_framesL): head += "lambda_%s\t" % (i)
 		for i in range(time_framesM): head += "mu_%s\t" % (i)
-	elif use_ADE_model == 1: 
-		head+="w_shape\t"
-		for i in range(time_framesM): head += "w_scale_%s\t" % (i)
+	elif use_ADE_model >= 1: 
+		if use_ADE_model == 1: 
+			head+="w_shape\t"
+			for i in range(time_framesM): head += "w_scale_%s\t" % (i)
+		elif use_ADE_model == 2: 
+			head+="corr_lambda\t"
+			for i in range(time_framesM): head += "corr_mu_%s\t" % (i)
 		for i in range(time_framesM): head += "mean_longevity_%s\t" % (i)
 	elif useDiscreteTraitModel == 1:
 		for i in range(len(lengths_B_events)): head += "lambda_%s\t" % (i)
@@ -3993,8 +4222,13 @@ if TDI<2:
 		for i in range(1,time_framesL): head += "shift_sp_%s\t" % (i)
 		for i in range(1,time_framesM): head += "shift_ex_%s\t" % (i)
 	
-	if analyze_tree ==1:
-		head += "tree_lik\ttree_sp\ttree_ex\t"
+	if analyze_tree >=1:
+		if analyze_tree==4:
+			head += "tree_lik\t"
+			for i in range(time_framesL): head += "tree_sp_%s\t" % (i)
+			for i in range(time_framesL): head += "tree_ex_%s\t" % (i)				
+		else:
+			head += "tree_lik\ttree_sp\ttree_ex\t"
 
 elif TDI == 2: head+="k_birth\tk_death\troot_age\tdeath_age\t"
 elif TDI == 3: head+="k_birth\tk_death\tDPP_alpha_L\tDPP_alpha_M\troot_age\tdeath_age\t"
@@ -4018,7 +4252,7 @@ os.fsync(logfile)
 
 # OUTPUT 2 MARGINAL RATES
 if args.log_marginal_rates == -1: # default values
-	if TDI==4: log_marginal_rates_to_file = 0
+	if TDI==4 or use_ADE_model != 0: log_marginal_rates_to_file = 0
 	else: log_marginal_rates_to_file = 1
 else:
 	log_marginal_rates_to_file = args.log_marginal_rates

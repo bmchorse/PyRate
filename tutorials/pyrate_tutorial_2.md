@@ -1,10 +1,13 @@
+<img src="https://github.com/dsilvestro/PyRate/blob/master/pyrate_lib/PyRate_logo1024.png" align="left" width="80">  
+
 # PyRate Tutorial \#2
 
-#### Daniele Silvestro – Jan 2018
+#### Daniele Silvestro – June 2018
 ***  
-Useful links:  
-[PyRate code](https://github.com/dsilvestro/PyRate)  
-[PyRate wiki](https://github.com/dsilvestro/PyRate/wiki)  
+#### Contents
+* [Birth-death models with time-continuous correlates](https://github.com/dsilvestro/PyRate/blob/master/tutorials/pyrate_tutorial_2.md#birth-death-models-with-time-continuous-correlates)  
+* [Model testing](https://github.com/dsilvestro/PyRate/blob/master/tutorials/pyrate_tutorial_2.md#model-testing-using-thermodynamic-integration-ti)
+
 ***
 
 
@@ -109,7 +112,7 @@ Rates through time plots can be generated using the command `-plot` as shown abo
 ***
 ## Models with rate shifts and time-continuous covariates
 
-
+More details soon...
 
 ***
 ## Model testing using Thermodynamic Integration (TI)

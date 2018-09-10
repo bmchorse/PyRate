@@ -39,7 +39,7 @@ from lib_utilities import get_mode as get_mode
 
 p = argparse.ArgumentParser() #description='<input file>') 
 p.add_argument('-d',     type=str,     help='data set (s/e table)', default=0, metavar=0)
-p.add_argument('-m',     type=int,     help='model (0: linear (default), 1: exponential)', default=0, metavar=0)
+p.add_argument('-m',     type=int,     help='model (0: exponential (default), 1: linear)', default=0, metavar=0)
 p.add_argument('-n',     type=int,     help='MCMC iterations', default=10000000, metavar=10000000)
 p.add_argument('-s',     type=int,     help='sampling freq.', default=5000, metavar=5000)
 p.add_argument('-p',     type=int,     help='print freq.', default=5000, metavar=5000)
@@ -48,7 +48,8 @@ p.add_argument('-b',     type=int,     help='burnin (number of generations)', de
 p.add_argument('-r',     type=float,   help='Data scaling (default option recommended)', default=0, metavar=0)
 p.add_argument('-plot',  type=str,     help='Plot rates-through-time (Log file)', default="", metavar="")
 p.add_argument('-var',   type=str,     help='Directory to continuous variables (takes all files)', default="", metavar="")
-p.add_argument('-T',     type=float,   help='Max age (truncate data)', default=-1, metavar=-1)
+p.add_argument('-maxT',     type=float,   help='Max age (truncate data)', default=-1, metavar=-1)
+p.add_argument('-minT',     type=float,   help='Min age (truncate data)', default=-1, metavar=-1)
 p.add_argument('-out',   type=str,     help='tag added to output file', default="", metavar="")
 p.add_argument('-bound', type=float,   help='absolute boundaries to local shrinkage (0 +/- bound)', default=np.inf, metavar=np.inf)
 p.add_argument('-rmDD',  type=int,     help='model (0: analysis includes self-diversity-dependence, 1: analysis excludes selfdiversity-dependence', default=0, metavar=0)
@@ -81,8 +82,8 @@ if args.plot != "":
 	
 
 corr_model=args.m
-if corr_model ==0: model_name = "lin"
-else: model_name = "exp"	
+if corr_model ==0: model_name = "exp"
+else: model_name = "lin"
 if args.out != "": out_tag = args.out + "_"
 else:  out_tag = ""
 root_age=max(ts)
@@ -283,8 +284,8 @@ if scaling==0: # All trajectories are scaled to range between 0 and 1
 	Dtraj= np.sum((Dtraj, -np.min(Dtraj, axis=0)), axis=0)
 	scale_factor = 1.
 	scale_factor = 1./(np.max(Dtraj, axis=0)-np.min(Dtraj, axis=0))
-	if corr_model==0: trasfRate_general = trasfMultiRateND 
-	elif corr_model==1: trasfRate_general = trasfMultiRateND_exp
+	if corr_model==1: trasfRate_general = trasfMultiRateND 
+	elif corr_model==0: trasfRate_general = trasfMultiRateND_exp
 elif scaling == 1: # all curves scaled to the max of the highest curve (useful if they are in the same unit, e.g. species)
 	scale_factor = 1./np.max(Dtraj)
 	if maxG ==0: maxG = 0.30/scale_factor # as in Silvestro et al. 2015 PNAS
@@ -328,9 +329,9 @@ else:
 	for j in range(n_clades): 
 		head+="\tGm%s_%s" % (fixed_focal_clade,j)
 	for j in range(n_clades): 
-		head+="\tkl%s_%s" % (fixed_focal_clade,j)
+		head+="\tWl%s_%s" % (fixed_focal_clade,j)
 	for j in range(n_clades): 
-		head+="\tkm%s_%s" % (fixed_focal_clade,j)
+		head+="\tWm%s_%s" % (fixed_focal_clade,j)
 
 	head+="\tLAM_mu"		
 	head+="\tLAM_sd"		
@@ -490,7 +491,7 @@ abline(v=-c(65,200,251,367,445),lty=2,col="gray")
 	sys.exit("\n")
 
 ##############################################################
-max_T = args.T
+max_T = args.maxT
 if max_T == -1: pass
 else: 
 	index_temp = np.arange(0,len(all_Times))
@@ -504,6 +505,21 @@ else:
 
 	index_temp = np.arange(0,len(ex_times))
 	index_included_ex_times = index_temp[ex_times<max_T]
+
+min_T = args.minT
+if max_T == -1: pass
+else: 
+	index_temp = np.arange(0,len(all_Times))
+	index_events_included = index_temp[all_Times>min_T]
+	
+	sp_times = all_Times[idx_s[fixed_focal_clade]]
+	ex_times = all_Times[idx_e[fixed_focal_clade]]
+	
+	index_temp = np.arange(0,len(sp_times))
+	index_included_sp_times = index_temp[sp_times>min_T]
+
+	index_temp = np.arange(0,len(ex_times))
+	index_included_ex_times = index_temp[ex_times>min_T]
 
 
 
